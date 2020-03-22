@@ -13,20 +13,11 @@ public class WaveformImageDrawer {
                               with configuration: WaveformConfiguration,
                               qos: DispatchQoS.QoSClass = .userInitiated,
                               completionHandler: @escaping (_ waveformImage: UIImage?) -> ()) {
-        let scaledSize = CGSize(width: configuration.size.width * configuration.scale,
-                                height: configuration.size.height * configuration.scale)
-        let scaledConfiguration = WaveformConfiguration(size: scaledSize,
-                                                        color: configuration.color,
-                                                        backgroundColor: configuration.backgroundColor,
-                                                        style: configuration.style,
-                                                        position: configuration.position,
-                                                        scale: configuration.scale,
-                                                        paddingFactor: configuration.paddingFactor)
         guard let waveformAnalyzer = WaveformAnalyzer(audioAssetURL: audioAssetURL) else {
             completionHandler(nil)
             return
         }
-        render(from: waveformAnalyzer, with: scaledConfiguration, qos: qos, completionHandler: completionHandler)
+        render(from: waveformAnalyzer, with: configuration, qos: qos, completionHandler: completionHandler)
     }
 
     /// Renders a UIImage of the waveform data calculated by the analyzer.
@@ -58,11 +49,38 @@ private extension WaveformImageDrawer {
                 completionHandler: @escaping (_ waveformImage: UIImage?) -> ()) {
         let sampleCount = Int(configuration.size.width * configuration.scale)
         waveformAnalyzer.samples(count: sampleCount, qos: qos) { samples in
-            guard let samples = samples else {
+            guard var samples = samples else {
                 completionHandler(nil)
                 return
             }
-            completionHandler(self.graphImage(from: samples, with: configuration))
+
+            let maxWidthPerImage: CGFloat = 5460 // seems limitation max 16383px / scale for UIGraphicsBeginImageContextWithOptions
+            let partCount = configuration.size.width / maxWidthPerImage
+
+            if partCount < 1 {
+                completionHandler(self.graphImage(from: samples, with: configuration))
+                return
+            }
+
+            let samplesPerPart = Int(ceil(CGFloat(samples.count) / partCount))
+            var partSize = CGSize(width: maxWidthPerImage, height: configuration.size.height)
+
+            (0...Int(partCount)).forEach { _ in
+                if samplesPerPart > samples.count {
+                    partSize.width = configuration.size.width.truncatingRemainder(dividingBy: maxWidthPerImage)
+                }
+
+                let part = samples.prefix(samplesPerPart).map { $0 }
+                samples = samples.dropFirst(samplesPerPart).map { $0 }
+                let partConfig = WaveformConfiguration(size: partSize,
+                                                       color: configuration.color,
+                                                       backgroundColor: configuration.backgroundColor,
+                                                       style: configuration.style,
+                                                       position: configuration.position,
+                                                       scale: configuration.scale,
+                                                       paddingFactor: configuration.paddingFactor)
+                completionHandler(self.graphImage(from: part, with: partConfig))
+            }
         }
     }
 
